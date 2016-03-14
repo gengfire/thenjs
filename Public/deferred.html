@@ -1,0 +1,274 @@
+<html>
+    <head>
+        <title>whenjs deferred</title>
+        <meta charset="utf-8">
+    </head>
+    <body>
+    <script type="text/javascript">
+    (function(window){ //
+        var whenniming = (function() {
+            var whenjs = function(){},
+            readyList,
+            promiseMethods = "then done fail isResolved isRejected promise".split(" "),
+            toString = Object.prototype.toString,
+            class2type = {};
+            whenjs.extend =  function() {
+                var options, name, src, copy, copyIsArray, clone, target = arguments[0] || {},
+                i = 1,
+                length = arguments.length,
+                deep = false;
+                if (typeof target === "boolean") {
+                    deep = target;
+                    target = arguments[1] || {};
+                    i = 2
+                }
+                if (typeof target !== "object" && !whenjs.isFunction(target)) {
+                    target = {}
+                }
+                if (length === i) {
+                    target = this; --i
+                }
+                for (; i < length; i++) {
+                    if ((options = arguments[i]) != null) {
+                        for (name in options) {
+                            src = target[name];
+                            copy = options[name];
+                            if (target === copy) {
+                                continue
+                            }
+                            if (deep && copy && (whenjs.isPlainObject(copy) || (copyIsArray = whenjs.isArray(copy)))) {
+                                if (copyIsArray) {
+                                    copyIsArray = false;
+                                    clone = src && whenjs.isArray(src) ? src: []
+                                } else {
+                                    clone = src && whenjs.isPlainObject(src) ? src: {}
+                                }
+                                target[name] = whenjs.extend(deep, clone, copy)
+                            } else {
+                                if (copy !== undefined) {
+                                    target[name] = copy
+                                }
+                            }
+                        }
+                    }
+                }
+                return target
+            };
+            whenjs.extend({
+                isFunction: function(obj) {
+                    return whenjs.type(obj) === "function"
+                },
+                type: function(obj) {
+                    return obj == null ? String(obj) : class2type[toString.call(obj)] || "object"
+                },
+                each: function(object, callback, args) {
+                    var name, i = 0,
+                    length = object.length,
+                    isObj = length === undefined || whenjs.isFunction(object);
+                    if (args) {
+                        if (isObj) {
+                            for (name in object) {
+                                if (callback.apply(object[name], args) === false) {
+                                    break
+                                }
+                            }
+                        } else {
+                            for (; i < length;) {
+                                if (callback.apply(object[i++], args) === false) {
+                                    break
+                                }
+                            }
+                        }
+                    } else {
+                        if (isObj) {
+                            for (name in object) {
+                                if (callback.call(object[name], name, object[name]) === false) {
+                                    break
+                                }
+                            }
+                        } else {
+                            for (var value = object[0]; i < length && callback.call(value, i, value) !== false; value = object[++i]) {}
+                        }
+                    }
+                    return object
+                },
+                _Deferred: function() {
+                    var callbacks = [],
+                    fired,
+                    firing,
+                    cancelled,
+                    deferred = {
+                        done: function() {
+                            if (!cancelled) {
+                                var args = arguments,
+                                i, length, elem, type, _fired;
+                                if (fired) {
+                                    _fired = fired;
+                                    fired = 0
+                                }
+                                for (i = 0, length = args.length; i < length; i++) {
+                                    elem = args[i];
+                                    type = whenjs.type(elem);
+                                    if (type === "array") {
+                                        deferred.done.apply(deferred, elem)
+                                    } else {
+                                        if (type === "function") {
+                                            callbacks.push(elem)
+                                        }
+                                    }
+                                }
+                                if (_fired) {
+                                    deferred.resolveWith(_fired[0], _fired[1])
+                                }
+                            }
+                            return this
+                        },
+                        resolveWith: function(context, args) {
+                            if (!cancelled && !fired && !firing) {
+                                firing = 1;
+                                try {
+                                    while (callbacks[0]) {
+                                        callbacks.shift().apply(context, args)
+                                    }
+                                } catch(e) {
+                                    throw e
+                                } finally {
+                                    fired = [context, args];
+                                    firing = 0
+                                }
+                            }
+                            return this
+                        },
+                        resolve: function() {
+                            deferred.resolveWith(whenjs.isFunction(this.promise) ? this.promise() : this, arguments);
+                            return this
+                        },
+                        isResolved: function() {
+                            return !! (firing || fired)
+                        },
+                        cancel: function() {
+                            cancelled = 1;
+                            callbacks = [];
+                            return this
+                        }
+                    };
+                    return deferred
+                },
+                Deferred: function(func) {
+                    var deferred = whenjs._Deferred(),
+                    failDeferred = whenjs._Deferred(),
+                    promise;
+                    whenjs.extend(deferred, {
+                        then: function(doneCallbacks, failCallbacks) {
+                            deferred.done(doneCallbacks).fail(failCallbacks);
+                            return this
+                        },
+                        fail: failDeferred.done,
+                        rejectWith: failDeferred.resolveWith,
+                        reject: failDeferred.resolve,
+                        isRejected: failDeferred.isResolved,
+                        promise: function(obj) {
+                            if (obj == null) {
+                                if (promise) {
+                                    return promise
+                                }
+                                promise = obj = {}
+                            }
+                            var i = promiseMethods.length;
+                            while (i--) {
+                                obj[promiseMethods[i]] = deferred[promiseMethods[i]]
+                            }
+                            return obj
+                        }
+                    });
+                    deferred.done(failDeferred.cancel).fail(deferred.cancel);
+                    delete deferred.cancel;
+                    if (func) {
+                        func.call(deferred, deferred)
+                    }
+                    return deferred
+                },
+                when: function(object) {
+                    var lastIndex = arguments.length,
+                    deferred = lastIndex <= 1 && object && whenjs.isFunction(object.promise) ? object: whenjs.Deferred(),
+                    promise = deferred.promise();
+                    if (lastIndex > 1) {
+                        var array = slice.call(arguments, 0),
+                        count = lastIndex,
+                        iCallback = function(index) {
+                            return function(value) {
+                                array[index] = arguments.length > 1 ? slice.call(arguments, 0) : value;
+                                if (! (--count)) {
+                                    deferred.resolveWith(promise, array)
+                                }
+                            }
+                        };
+                        while ((lastIndex--)) {
+                            object = array[lastIndex];
+                            if (object && whenjs.isFunction(object.promise)) {
+                                object.promise().then(iCallback(lastIndex), deferred.reject)
+                            } else {--count
+                            }
+                        }
+                        if (!count) {
+                            deferred.resolveWith(promise, array)
+                        }
+                    } else {
+                        if (deferred !== object) {
+                            deferred.resolve(object)
+                        }
+                    }
+                    return promise
+                }
+            });
+            readyList = whenjs._Deferred();
+            whenjs.each("Boolean Number String Function Array Date RegExp Object".split(" "),
+            function(i, name) {
+                class2type["[object " + name + "]"] = name.toLowerCase()
+            });
+            return whenjs //匿名函数内部
+        })();
+        window.whenjs = whenniming; //导出匿名函数
+    })(window);                //
+
+
+        //
+        var D = function(url){
+            return url;
+        }
+        String.prototype.data = function(data){
+            var url = this,data = data || '';
+            if(data!==''){
+                var tmp = [];
+                for(var i in data){
+                  if(typeof(data[i])!=='function'){
+                    tmp.push(i+'='+data[i]);
+                  }
+                }
+                data = tmp.join('&');
+              }
+            return url+'+-+'+data;
+        }
+        String.prototype.find = function(){
+            if(this.indexOf('+-+')>=0){
+                var url = this.split("+-+")[0],data = this.split("+-+")[1];
+            }else{
+                var url = this,data = '';
+            }
+            var wait = function(){
+        　　　　var defe = whenjs.Deferred();
+                var aa = '获得数据';
+        　　　　setTimeout(function(){
+                    defe.resolve(url+aa+data);
+        　　　　}, 1000);
+        　　　　return defe.promise();
+        　　};
+            return whenjs.when(wait());
+        }
+        
+
+
+        D('http://url.com/sjis').find().then(function(data){ alert(data);});
+    </script>
+    </body>
+</html>　　
